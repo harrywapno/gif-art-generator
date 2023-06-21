@@ -1,0 +1,456 @@
+# Project Architecture
+
+## Overview
+The project aims to generate artistic depictions of GIFs using existing mathematical visualization code. The project will be implemented using Python and Node.js. The neural network will be trained using scikit-learn and TensorFlow. GANs and Adversarial networks will be used to generate random parameters to the mathematical code to generate thousands of GIFs. The output will be stored in a database. The project will be processed using a pipeline.
+
+## File Structure
+```
+mathematical_visualization/
+├── backend/
+│   ├── app.py
+│   ├── requirements.txt
+│   ├── models/
+│   │   ├── generator.py
+│   │   ├── discriminator.py
+│   │   ├── model.py
+│   ├── utils/
+│   │   ├── data_loader.py
+│   │   ├── image_utils.py
+│   │   ├── math_utils.py
+│   ├── database/
+│   │   ├── database.py
+│   ├── tests/
+│   │   ├── test_database.py
+│   │   ├── test_math_utils.py
+│   ├── config/
+│   │   ├── config.py
+├── frontend/
+│   ├── index.html
+│   ├── css/
+│   │   ├── style.css
+│   ├── js/
+│   │   ├── main.js
+│   ├── img/
+│   │   ├── gif1.gif
+│   │   ├── gif2.gif
+│   ├── requirements.txt
+├── data/
+│   ├── gif_data.csv
+│   ├── gif_images/
+│   │   ├── gif1.gif
+│   │   ├── gif2.gif
+├── models/
+│   ├── generator.h5
+│   ├── discriminator.h5
+├── requirements.txt
+├── README.md
+```
+
+## File Description
+
+### backend/app.py
+```python
+from flask import Flask, jsonify, request
+from models.model import GAN
+from utils.data_loader import DataLoader
+from utils.image_utils import save_image
+from config.config import Config
+from database.database import Database
+
+app = Flask(__name__)
+app.config.from_object(Config)
+
+database = Database()
+
+gan = GAN()
+gan.load_models()
+
+data_loader = DataLoader()
+
+@app.route('/generate_gif', methods=['POST'])
+def generate_gif():
+    data = request.get_json()
+    parameters = data['parameters']
+    image = gan.generate_image(parameters)
+    gif_id = database.save_gif(parameters, image)
+    save_image(image, f'{gif_id}.gif')
+    return jsonify({'gif_id': gif_id})
+
+@app.route('/get_gif', methods=['GET'])
+def get_gif():
+    gif_id = request.args.get('gif_id')
+    gif = database.get_gif(gif_id)
+    return jsonify({'gif': gif})
+
+if __name__ == '__main__':
+    app.run()
+```
+This file contains the Flask app that serves as the backend for the project. It loads the GAN models, initializes the DataLoader, and connects to the database. It has two endpoints: `/generate_gif` and `/get_gif`. The `/generate_gif` endpoint takes in a JSON object containing the parameters for the GAN and returns the ID of the generated GIF. The `/get_gif` endpoint takes in a GIF ID and returns the GIF image.
+
+### backend/models/generator.py
+```python
+import tensorflow as tf
+from tensorflow.keras import layers
+
+class Generator(tf.keras.Model):
+    def __init__(self):
+        super(Generator, self).__init__()
+
+        self.dense1 = layers.Dense(7*7*256, use_bias=False, input_shape=(100,))
+        self.batch_norm1 = layers.BatchNormalization()
+        self.leaky_relu1 = layers.LeakyReLU()
+
+        self.reshape1 = layers.Reshape((7, 7, 256))
+
+        self.conv_transpose1 = layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False)
+        self.batch_norm2 = layers.BatchNormalization()
+        self.leaky_relu2 = layers.LeakyReLU()
+
+        self.conv_transpose2 = layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False)
+        self.batch_norm3 = layers.BatchNormalization()
+        self.leaky_relu3 = layers.LeakyReLU()
+
+        self.conv_transpose3 = layers.Conv2DTranspose(1, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh')
+
+    def call(self, inputs):
+        x = self.dense1(inputs)
+        x = self.batch_norm1(x)
+        x = self.leaky_relu1(x)
+
+        x = self.reshape1(x)
+
+        x = self.conv_transpose1(x)
+        x = self.batch_norm2(x)
+        x = self.leaky_relu2(x)
+
+        x = self.conv_transpose2(x)
+        x = self.batch_norm3(x)
+        x = self.leaky_relu3(x)
+
+        x = self.conv_transpose3(x)
+
+        return x
+```
+This file contains the Generator model for the GAN. It is a TensorFlow Keras model that takes in a 100-dimensional noise vector and outputs a 28x28 grayscale image.
+
+### backend/models/discriminator.py
+```python
+import tensorflow as tf
+from tensorflow.keras import layers
+
+class Discriminator(tf.keras.Model):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+
+        self.conv1 = layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same', input_shape=[28, 28, 1])
+        self.leaky_relu1 = layers.LeakyReLU()
+        self.dropout1 = layers.Dropout(0.3)
+
+        self.conv2 = layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same')
+        self.leaky_relu2 = layers.LeakyReLU()
+        self.dropout2 = layers.Dropout(0.3)
+
+        self.flatten = layers.Flatten()
+
+        self.dense1 = layers.Dense(1)
+
+    def call(self, inputs):
+        x = self.conv1(inputs)
+        x = self.leaky_relu1(x)
+        x = self.dropout1(x)
+
+        x = self.conv2(x)
+        x = self.leaky_relu2(x)
+        x = self.dropout2(x)
+
+        x = self.flatten(x)
+
+        x = self.dense1(x)
+
+        return x
+```
+This file contains the Discriminator model for the GAN. It is a TensorFlow Keras model that takes in a 28x28 grayscale image and outputs a single scalar value representing the probability that the image is real.
+
+### backend/models/model.py
+```python
+import tensorflow as tf
+from tensorflow.keras import optimizers
+from .generator import Generator
+from .discriminator import Discriminator
+
+class GAN:
+    def __init__(self):
+        self.generator = Generator()
+        self.discriminator = Discriminator()
+        self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+        self.generator_optimizer = optimizers.Adam(1e-4)
+        self.discriminator_optimizer = optimizers.Adam(1e-4)
+        self.checkpoint_prefix = './checkpoints/train'
+        self.checkpoint = tf.train.Checkpoint(generator_optimizer=self.generator_optimizer,
+                                              discriminator_optimizer=self.discriminator_optimizer,
+                                              generator=self.generator,
+                                              discriminator=self.discriminator)
+
+    def discriminator_loss(self, real_output, fake_output):
+        real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
+        fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
+        total_loss = real_loss + fake_loss
+        return total_loss
+
+    def generator_loss(self, fake_output):
+        return self.cross_entropy(tf.ones_like(fake_output), fake_output)
+
+    @tf.function
+    def train_step(self, images):
+        noise = tf.random.normal([Config.BATCH_SIZE, 100])
+
+        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+            generated_images = self.generator(noise, training=True)
+
+            real_output = self.discriminator(images, training=True)
+            fake_output = self.discriminator(generated_images, training=True)
+
+            gen_loss = self.generator_loss(fake_output)
+            disc_loss = self.discriminator_loss(real_output, fake_output)
+
+        gradients_of_generator = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
+        gradients_of_discriminator = disc_tape.gradient(disc_loss, self.discriminator.trainable_variables)
+
+        self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
+        self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+
+    def train(self, dataset, epochs):
+        for epoch in range(epochs):
+            for image_batch in dataset:
+                self.train_step(image_batch)
+
+            if (epoch + 1) % 10 == 0:
+                self.checkpoint.save(file_prefix=self.checkpoint_prefix)
+
+    def generate_image(self, parameters):
+        noise = tf.random.normal([1, 100])
+        for i, param in enumerate(parameters):
+            noise[0][i] = param
+        return self.generator(noise, training=False).numpy()[0]
+    
+    def load_models(self):
+        self.generator.load_weights('./models/generator.h5')
+        self.discriminator.load_weights('./models/discriminator.h5')
+```
+This file contains the GAN model. It initializes the Generator and Discriminator models, defines the loss functions and optimizers, and defines the training step. It also has methods for training the GAN, generating an image from parameters, and loading the saved models.
+
+### backend/utils/data_loader.py
+```python
+import pandas as pd
+import numpy as np
+from .image_utils import load_image
+
+class DataLoader:
+    def __init__(self):
+        self.data = pd.read_csv('./data/gif_data.csv')
+
+    def get_image(self, gif_id):
+        return load_image(f'./data/gif_images/{gif_id}.gif')
+
+    def get_parameters(self, gif_id):
+        row = self.data.loc[self.data['gif_id'] == gif_id]
+        parameters = np.array(row.iloc[:, 1:])
+        return parameters
+```
+This file contains the DataLoader class. It loads the GIF data from a CSV file and provides methods for getting the image and parameters for a given GIF ID.
+
+### backend/utils/image_utils.py
+```python
+import imageio
+import numpy as np
+
+def load_image(path):
+    return np.array(imageio.imread(path))[:, :, :1] / 255.0
+
+def save_image(image, path):
+    imageio.mimsave(f'./frontend/img/{path}', [image], duration=0.1)
+```
+This file contains utility functions for loading and saving images. The `load_image` function loads an image from a file and returns a normalized NumPy array. The `save_image` function saves an image to a file.
+
+### backend/utils/math_utils.py
+```python
+import numpy as np
+
+def generate_random_parameters():
+    return np.random.uniform(-1, 1, size=(100,))
+```
+This file contains utility functions for generating random parameters for the GAN. The `generate_random_parameters` function generates a 100-dimensional noise vector with values between -1 and 1.
+
+### backend/database/database.py
+```python
+import sqlite3
+from ..utils.math_utils import generate_random_parameters
+
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect('./data/gifs.db')
+        self.cursor = self.conn.cursor()
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS gifs
+                               (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                parameters TEXT,
+                                image_path TEXT)''')
+        self.conn.commit()
+
+    def save_gif(self, parameters, image):
+        parameters_str = ','.join([str(p) for p in parameters])
+        gif_id = self.cursor.execute(f"INSERT INTO gifs (parameters, image_path) VALUES ('{parameters_str}', '{image_path}')").lastrowid
+        self.conn.commit()
+        return gif_id
+
+    def get_gif(self, gif_id):
+        row = self.cursor.execute(f"SELECT image_path FROM gifs WHERE id = {gif_id}").fetchone()
+        if row is None:
+            return None
+        return row[0]
+
+    def get_random_parameters(self):
+        return generate_random_parameters()
+```
+This file contains the Database class. It connects to a SQLite database and provides methods for saving and retrieving GIFs. The `save_gif` method saves the parameters and image path for a generated GIF to the database and returns the ID of the GIF. The `get_gif` method retrieves the image path for a given GIF ID. The `get_random_parameters` method generates random parameters for the GAN.
+
+### backend/tests/test_database.py
+```python
+import unittest
+from ..database.database import Database
+
+class TestDatabase(unittest.TestCase):
+    def setUp(self):
+        self.database = Database()
+
+    def test_save_gif(self):
+        parameters = [0.1, 0.2, 0.3, 0.4, 0.5]
+        image_path = 'test.gif'
+        gif_id = self.database.save_gif(parameters, image_path)
+        self.assertIsNotNone(gif_id)
+
+    def test_get_gif(self):
+        parameters = [0.1, 0.2, 0.3, 0.4, 0.5]
+        image_path = 'test.gif'
+        gif_id = self.database.save_gif(parameters, image_path)
+        retrieved_image_path = self.database.get_gif(gif_id)
+        self.assertEqual(retrieved_image_path, image_path)
+
+if __name__ == '__main__':
+    unittest.main()
+```
+This file contains unit tests for the Database class.
+
+### backend/tests/test_math_utils.py
+```python
+import unittest
+from ..utils.math_utils import generate_random_parameters
+
+class TestMathUtils(unittest.TestCase):
+    def test_generate_random_parameters(self):
+        parameters = generate_random_parameters()
+        self.assertEqual(len(parameters), 100)
+        self.assertTrue(all(p >= -1 and p <= 1 for p in parameters))
+
+if __name__ == '__main__':
+    unittest.main()
+```
+This file contains unit tests for the math_utils module.
+
+### backend/config/config.py
+```python
+class Config:
+    BATCH_SIZE = 256
+```
+This file contains the Config class. It defines configuration variables for the project.
+
+### frontend/index.html
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mathematical Visualization</title>
+    <link rel="stylesheet" type="text/css" href="css/style.css">
+</head>
+<body>
+    <h1>Mathematical Visualization</h1>
+    <div id="gif-container"></div>
+    <button id="generate-button">Generate GIF</button>
+    <script src="js/main.js"></script>
+</body>
+</html>
+```
+This file contains the HTML for the frontend of the project. It has a container for displaying the generated GIFs and a button for generating a new GIF.
+
+### frontend/css/style.css
+```css
+body {
+    font-family: Arial, sans-serif;
+}
+
+h1 {
+    text-align: center;
+}
+
+#gif-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 50px;
+}
+
+#generate-button {
+    display: block;
+    margin: 0 auto;
+    margin-top: 50px;
+    font-size: 20px;
+    padding: 10px 20px;
+    border-radius: 5px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+#generate-button:hover {
+    background-color: #3E8E41;
+}
+```
+This file contains the CSS for the frontend of the project. It styles the container and button.
+
+### frontend/js/main.js
+```javascript
+const gifContainer = document.getElementById('gif-container');
+const generateButton = document.getElementById('generate-button');
+
+generateButton.addEventListener('click', () => {
+    fetch('/generate_gif', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            parameters: generateRandomParameters()
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        const gifId = data.gif_id;
+        fetch(`/get_gif?gif_id=${gifId}`)
+        .then(response => response.json())
+        .then(data => {
+            const gif = data.gif;
+            const img = document.createElement('img');
+            img.src = `img/${gif}`;
+            gifContainer.appendChild(img);
+        });
+    });
+});
+
+function generateRandomParameters() {
+    const parameters = [];
+    for (let i = 0; i < 100; i++) {
+        parameters.push(Math.random() * 2 - 1);
+    }
+    return parameters;
+}
+```
+This file contains the JavaScript for the frontend

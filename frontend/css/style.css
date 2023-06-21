@@ -1,0 +1,30 @@
+body {
+    font-family: Arial, sans-serif;
+}
+
+h1 {
+    text-align: center;
+}
+
+#gif-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 50px;
+}
+
+#generate-button {
+    display: block;
+    margin: 0 auto;
+    margin-top: 50px;
+    font-size: 20px;
+    padding: 10px 20px;
+    border-radius: 5px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+#generate-button:hover {
+    background-color: #3E8E41;
+}
